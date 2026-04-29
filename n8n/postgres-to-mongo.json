@@ -1,0 +1,194 @@
+{
+  "name": "Facturia — Postgres → MongoDB ETL",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "0b8d1e00-0000-0000-0000-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS _id, name, email, phone, address, created_at AS \"createdAt\" FROM clients ORDER BY id;",
+        "options": {}
+      },
+      "id": "0b8d1e00-0000-0000-0000-000000000002",
+      "name": "PG: SELECT clients",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 160],
+      "credentials": {
+        "postgres": {
+          "id": "facturia-postgres",
+          "name": "Facturia Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "clients",
+        "fields": "_id,name,email,phone,address,createdAt",
+        "options": {}
+      },
+      "id": "0b8d1e00-0000-0000-0000-000000000003",
+      "name": "Mongo: Insert clients",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [720, 160],
+      "credentials": {
+        "mongoDb": {
+          "id": "facturia-mongo",
+          "name": "Facturia Mongo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS _id, name, description, price::float AS price, stock, category, created_at AS \"createdAt\" FROM products ORDER BY id;",
+        "options": {}
+      },
+      "id": "0b8d1e00-0000-0000-0000-000000000004",
+      "name": "PG: SELECT products",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "facturia-postgres",
+          "name": "Facturia Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "products",
+        "fields": "_id,name,description,price,stock,category,createdAt",
+        "options": {}
+      },
+      "id": "0b8d1e00-0000-0000-0000-000000000005",
+      "name": "Mongo: Insert products",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [720, 300],
+      "credentials": {
+        "mongoDb": {
+          "id": "facturia-mongo",
+          "name": "Facturia Mongo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  i.id AS _id,\n  i.invoice_number AS \"invoiceNumber\",\n  i.issued_at AS \"issuedAt\",\n  i.status,\n  i.total::float AS total,\n  jsonb_build_object(\n    '_id', c.id,\n    'name', c.name,\n    'email', c.email\n  ) AS client,\n  COALESCE(\n    jsonb_agg(\n      jsonb_build_object(\n        'productId', p.id,\n        'productName', p.name,\n        'quantity', ii.quantity,\n        'unitPrice', ii.unit_price::float,\n        'subtotal', ii.subtotal::float\n      )\n      ORDER BY ii.id\n    ) FILTER (WHERE ii.id IS NOT NULL),\n    '[]'::jsonb\n  ) AS items\nFROM invoices i\nJOIN clients c ON c.id = i.client_id\nLEFT JOIN invoice_items ii ON ii.invoice_id = i.id\nLEFT JOIN products p ON p.id = ii.product_id\nGROUP BY i.id, c.id\nORDER BY i.id;",
+        "options": {}
+      },
+      "id": "0b8d1e00-0000-0000-0000-000000000006",
+      "name": "PG: SELECT invoices (with embedded items)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 460],
+      "credentials": {
+        "postgres": {
+          "id": "facturia-postgres",
+          "name": "Facturia Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Postgres output for MongoDB.\n// - jsonb columns arrive as JS objects already, but defensively parse strings.\n// - Ensure issuedAt is a real Date.\nreturn items.map(({ json }) => {\n  const client = typeof json.client === 'string' ? JSON.parse(json.client) : json.client;\n  const itemsArr = typeof json.items === 'string' ? JSON.parse(json.items) : json.items;\n  return {\n    json: {\n      _id: Number(json._id),\n      invoiceNumber: json.invoiceNumber,\n      client: {\n        _id: Number(client._id),\n        name: client.name,\n        email: client.email,\n      },\n      issuedAt: new Date(json.issuedAt),\n      status: json.status,\n      total: Number(json.total),\n      items: (itemsArr || []).map((it) => ({\n        productId: Number(it.productId),\n        productName: it.productName,\n        quantity: Number(it.quantity),\n        unitPrice: Number(it.unitPrice),\n        subtotal: Number(it.subtotal),\n      })),\n    },\n  };\n});"
+      },
+      "id": "0b8d1e00-0000-0000-0000-000000000007",
+      "name": "Transform invoices",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 460]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "invoices",
+        "fields": "_id,invoiceNumber,client,issuedAt,status,total,items",
+        "options": {}
+      },
+      "id": "0b8d1e00-0000-0000-0000-000000000008",
+      "name": "Mongo: Insert invoices",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [960, 460],
+      "credentials": {
+        "mongoDb": {
+          "id": "facturia-mongo",
+          "name": "Facturia Mongo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "done",
+              "name": "status",
+              "value": "ETL complete",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0b8d1e00-0000-0000-0000-000000000009",
+      "name": "Done",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "PG: SELECT clients", "type": "main", "index": 0 },
+          { "node": "PG: SELECT products", "type": "main", "index": 0 },
+          { "node": "PG: SELECT invoices (with embedded items)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "PG: SELECT clients": {
+      "main": [[{ "node": "Mongo: Insert clients", "type": "main", "index": 0 }]]
+    },
+    "PG: SELECT products": {
+      "main": [[{ "node": "Mongo: Insert products", "type": "main", "index": 0 }]]
+    },
+    "PG: SELECT invoices (with embedded items)": {
+      "main": [[{ "node": "Transform invoices", "type": "main", "index": 0 }]]
+    },
+    "Transform invoices": {
+      "main": [[{ "node": "Mongo: Insert invoices", "type": "main", "index": 0 }]]
+    },
+    "Mongo: Insert clients": {
+      "main": [[{ "node": "Done", "type": "main", "index": 0 }]]
+    },
+    "Mongo: Insert products": {
+      "main": [[{ "node": "Done", "type": "main", "index": 0 }]]
+    },
+    "Mongo: Insert invoices": {
+      "main": [[{ "node": "Done", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "versionId": "1"
+}
